@@ -74,7 +74,7 @@ If the reply arrives while the sub-agent is still mid-turn, it is absorbed into 
 
 ## Defining agents
 
-This package does **not** ship scout/researcher/worker (or any other) personas. Place a `.md` file in `.pi/agents/` (project) or `~/.pi/agent/agents/` (global). Discovery priority: **project > global > package** — a project-local file overrides a global or package agent with the same name.
+This package does **not** ship scout/researcher/worker (or any other) personas. Place a `.md` file in `.pi/agents/` (project) or `~/.pi/agent/agents/` (global). Discovery priority: **project > global** — a project-local file overrides a global agent with the same name.
 
 ```markdown
 ---

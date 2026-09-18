@@ -132,7 +132,7 @@ const SubagentParams = Type.Object({
     description:
       "Which agent to spawn by name. Loads that agent's fixed profile — its model, tool " +
       "loadout, and system prompt. Must be one of the agents returned by subagents_list " +
-      "(project .pi/agents/, global ~/.pi/agent/agents/, or package agents/). " +
+      "(project .pi/agents/ or global ~/.pi/agent/agents/). " +
       "Prefer project agents when present. Do not invent agent names.",
   }),
   task: Type.String({ description: "Task/prompt for the sub-agent" }),
@@ -2015,11 +2015,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       label: "List Subagents",
       description:
         "List all available subagent definitions. " +
-        "Scans project .pi/agents/, global ~/.pi/agent/agents/, and any package agents/. " +
-        "Priority: project > global > package. Prefer project agents for this repo.",
+        "Scans project .pi/agents/ and global ~/.pi/agent/agents/. " +
+        "Priority: project > global. Prefer project agents for this repo.",
       promptSnippet:
-        "List available subagent definitions (project, global, package). " +
-        "Project agents override global/package agents with the same name.",
+        "List available subagent definitions (project, then global). " +
+        "Project agents override global agents with the same name.",
       parameters: Type.Object({}),
 
       async execute() {
@@ -2410,7 +2410,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       const defs = loadAgentDefaults(agentName);
       if (!defs) {
         ctx.ui.notify(
-          `Agent "${agentName}" not found in .pi/agents/, ~/.pi/agent/agents/, or package agents/`,
+          `Agent "${agentName}" not found in .pi/agents/ or ~/.pi/agent/agents/`,
           "error",
         );
         return;
