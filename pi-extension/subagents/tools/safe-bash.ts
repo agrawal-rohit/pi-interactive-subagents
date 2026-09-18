@@ -1,5 +1,5 @@
 /**
- * Safe bash extension for the worker subagent.
+ * Safe bash extension for sub-agents that list `safe_bash` in tools.
  * Wraps the built-in bash tool with dangerous command blocking.
  *
  * Loaded into a child pi process via `--extension` when an agent's `tools`

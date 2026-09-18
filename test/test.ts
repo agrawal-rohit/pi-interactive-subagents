@@ -1172,47 +1172,112 @@ describe("subagent discovery", () => {
     );
   });
 
-  it("bundled scout/researcher/worker all resolve as non-interactive (auto-exit)", () => {
-    for (const name of ["scout", "researcher", "worker"]) {
-      const defs = testApi.loadAgentDefaults(name);
-      assert.ok(defs, `expected bundled agent ${name} to be discoverable`);
-      assert.equal(
-        testApi.resolveEffectiveInteractive({ name, task: "" }, defs),
-        false,
-        `${name} should resolve as non-interactive (autonomous, auto-exit)`,
+  it("project agents with auto-exit resolve as non-interactive by default", async () => {
+    await withIsolatedAgentEnv(async ({ projectAgentsDir }) => {
+      writeAgentFile(
+        projectAgentsDir,
+        "autonomous",
+        ["name: autonomous", "auto-exit: true", "tools: read"].join("\n"),
       );
-    }
+      const defs = testApi.loadAgentDefaults("autonomous");
+      assert.ok(defs, "expected project agent to load");
+      assert.equal(
+        testApi.resolveEffectiveInteractive({ name: "autonomous", task: "" }, defs),
+        false,
+      );
+    });
   });
 
-  it("worker is granted the spawning toolset restricted to scout and researcher", () => {
-    const worker = testApi.loadAgentDefaults("worker");
-    assert.ok(worker, "expected bundled worker to be discoverable");
-    assert.deepEqual(worker.subagentAgents, ["scout", "researcher"]);
+  it("subagent_agents grants the spawning toolset to that agent only", async () => {
+    await withIsolatedAgentEnv(async ({ projectAgentsDir }) => {
+      writeAgentFile(
+        projectAgentsDir,
+        "lead",
+        [
+          "name: lead",
+          "tools: read, bash",
+          "subagent_agents: helper",
+          "auto-exit: true",
+        ].join("\n"),
+      );
+      writeAgentFile(
+        projectAgentsDir,
+        "helper",
+        ["name: helper", "tools: read", "auto-exit: true"].join("\n"),
+      );
 
-    const allowlist = testApi.buildSubagentToolAllowlist(worker.tools, { grantSpawning: true });
-    assert.ok(allowlist, "expected an allowlist");
-    const tools = new Set(allowlist!.split(","));
-    for (const t of ["subagent", "subagent_message", "subagents_list"]) {
-      assert.ok(tools.has(t), `expected spawning tool ${t} in worker allowlist`);
-    }
-    assert.ok(tools.has("bash"), "expected worker to keep bash");
+      const lead = testApi.loadAgentDefaults("lead");
+      assert.ok(lead, "expected lead agent to load");
+      assert.deepEqual(lead.subagentAgents, ["helper"]);
+
+      const allowlist = testApi.buildSubagentToolAllowlist(lead.tools, { grantSpawning: true });
+      assert.ok(allowlist, "expected an allowlist");
+      const tools = new Set(allowlist!.split(","));
+      for (const t of ["subagent", "subagent_message", "subagents_list"]) {
+        assert.ok(tools.has(t), `expected spawning tool ${t} in lead allowlist`);
+      }
+      assert.ok(tools.has("bash"), "expected lead to keep bash");
+
+      const helper = testApi.loadAgentDefaults("helper");
+      assert.ok(helper);
+      assert.equal(helper.subagentAgents, undefined, "helper should not declare subagent_agents");
+    });
   });
 
-  it("scout and researcher are not granted spawning tools", () => {
-    for (const name of ["scout", "researcher"]) {
-      const defs = testApi.loadAgentDefaults(name);
-      assert.ok(defs, `expected bundled agent ${name} to be discoverable`);
-      assert.equal(defs.subagentAgents, undefined, `${name} should not declare subagent_agents`);
-    }
+  it("parses folded YAML description frontmatter used by project agents", async () => {
+    await withIsolatedAgentEnv(async ({ projectAgentsDir }) => {
+      writeAgentFile(
+        projectAgentsDir,
+        "voyager",
+        [
+          "name: voyager",
+          "description: >-",
+          "  Explores the codebase and seeds Thought on the shared MDX artefact.",
+          "  Use proactively for architecture questions.",
+          "tools: read, grep",
+          "auto-exit: true",
+        ].join("\n"),
+      );
+
+      const loaded = testApi.loadAgentDefaults("voyager");
+      assert.ok(loaded);
+      assert.match(
+        loaded.description ?? "",
+        /Explores the codebase.*architecture questions/,
+      );
+      assert.doesNotMatch(loaded.description ?? "", /^>-/);
+    });
+  });
+
+  it("discovers project agents and does not require package-bundled profiles", async () => {
+    await withIsolatedAgentEnv(async ({ projectAgentsDir }) => {
+      writeAgentFile(
+        projectAgentsDir,
+        "aristotle",
+        ["name: aristotle", "description: Plans changes", "tools: read"].join("\n"),
+      );
+      const discovered = testApi.discoverAgentDefinitions();
+      assert.ok(discovered.some((a) => a.name === "aristotle" && a.source === "project"));
+      assert.equal(
+        discovered.some((a) => ["scout", "researcher", "worker"].includes(a.name)),
+        false,
+        "fork ships no built-in scout/researcher/worker agents",
+      );
+    });
   });
 
   it("getToolExtensionPath maps custom tools and skips built-ins", () => {
     assert.equal(testApi.getToolExtensionPath("read"), undefined);
     assert.equal(testApi.getToolExtensionPath("bash"), undefined);
-    assert.ok(testApi.getToolExtensionPath("web_search")?.endsWith("web-search/index.ts"));
+    // safe_bash is packaged with this extension — always resolvable.
     assert.ok(testApi.getToolExtensionPath("safe_bash")?.endsWith("tools/safe-bash.ts"));
     // Spawning tools are registered by this extension itself.
     assert.ok(testApi.getToolExtensionPath("subagent")?.endsWith("index.ts"));
+    // Optional pi-agent extensions: only resolve when installed under the agent dir.
+    const webSearch = testApi.getToolExtensionPath("web_search");
+    if (webSearch != null) {
+      assert.ok(webSearch.endsWith("web-search/index.ts"));
+    }
   });
 
   it("ignores invalid session-mode values", async () => {
@@ -1788,21 +1853,28 @@ describe("tmux.ts interpretExitSidecar", () => {
   });
 });
 describe("commands", () => {
-  it("/subagent emits a spawn tool call for a known agent", () => {
-    const { api, registeredCommands, sentUserMessages } = createMockExtensionApi();
+  it("/subagent emits a spawn tool call for a known agent", async () => {
+    await withIsolatedAgentEnv(async ({ projectAgentsDir }) => {
+      writeAgentFile(
+        projectAgentsDir,
+        "explorer",
+        ["name: explorer", "tools: read", "auto-exit: true"].join("\n"),
+      );
 
-    (subagentsModule as any).default(api);
+      const { api, registeredCommands, sentUserMessages } = createMockExtensionApi();
+      (subagentsModule as any).default(api);
 
-    const subagent = registeredCommands.find((command) => command.name === "subagent");
-    assert.ok(subagent, "expected /subagent to be registered");
+      const subagent = registeredCommands.find((command) => command.name === "subagent");
+      assert.ok(subagent, "expected /subagent to be registered");
 
-    subagent.handler("scout map the auth code", {
-      ui: { notify() {} },
+      subagent.handler("explorer map the auth code", {
+        ui: { notify() {} },
+      });
+
+      assert.equal(sentUserMessages.length, 1);
+      assert.match(sentUserMessages[0], /agent: "explorer"/);
+      assert.match(sentUserMessages[0], /map the auth code/);
     });
-
-    assert.equal(sentUserMessages.length, 1);
-    assert.match(sentUserMessages[0], /agent: "scout"/);
-    assert.match(sentUserMessages[0], /map the auth code/);
   });
 
   it("does not register the removed /iterate or /plan commands", () => {

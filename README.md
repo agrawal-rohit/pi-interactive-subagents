@@ -2,7 +2,7 @@
 
 Async subagents for [pi](https://github.com/badlogic/pi-mono), running in tmux panes. Spawn a sub-agent, keep working in the main session, and get the result steered back when it finishes. Fully non-blocking.
 
-**tmux-only fork.** See [Acknowledgements](#acknowledgements) for the upstream project, which also supports cmux, zellij, and WezTerm.
+**General-purpose fork.** Ships **no** built-in agent personas — you define agents in `.pi/agents/` (project) or `~/.pi/agent/agents/` (global). See [Acknowledgements](#acknowledgements) for upstream lineage.
 
 ## How it works
 
@@ -10,8 +10,8 @@ Async subagents for [pi](https://github.com/badlogic/pi-mono), running in tmux p
 
 ```
 ╭─ Subagents ──────────────────────────── 2 running ─╮
-│ 00:23  scout      active · bash 7m                 │
-│ 00:45  scout-2    waiting 2m                       │
+│ 00:23  explorer   active · bash 7m                 │
+│ 00:45  explorer-2 waiting 2m                       │
 ╰────────────────────────────────────────────────────╯
 ```
 
@@ -39,15 +39,15 @@ There is also a `/subagent <agent> <task>` command for spawning directly.
 ### Spawning
 
 ```typescript
-subagent({ agent: "scout", task: "Analyze the auth module" });
-subagent({ agent: "worker", name: "dark-mode", task: "Implement the dark mode toggle" });
+subagent({ agent: "explorer", task: "Analyze the auth module" });
+subagent({ agent: "implementer", name: "dark-mode", task: "Implement the dark mode toggle" });
 ```
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `agent` | string | required | Which agent to spawn (must be known and permitted) |
 | `task` | string | required | Task prompt |
-| `name` | string | agent name | Display name for the pane and widget. Must be unique — duplicates are auto-suffixed (`scout`, `scout-2`, …) |
+| `name` | string | agent name | Display name for the pane and widget. Must be unique — duplicates are auto-suffixed (`explorer`, `explorer-2`, …) |
 | `model` | string | agent's model | Override the model for this spawn |
 | `cwd` | string | agent's `cwd` | Working directory (see [Role folders](#role-folders)) |
 
@@ -56,7 +56,7 @@ subagent({ agent: "worker", name: "dark-mode", task: "Implement the dark mode to
 `subagent_message` is addressed **by name only**. Names are unique per session and persist after a sub-agent finishes, so the same name works either way:
 
 ```typescript
-subagent_message({ name: "scout", message: "Also check the auth middleware" });
+subagent_message({ name: "explorer", message: "Also check the auth middleware" });
 ```
 
 - **Running** — the message is typed into the live pane (newlines flattened) and picked up at the next turn boundary. The call returns immediately; the eventual completion still arrives as a steer message.
@@ -72,24 +72,15 @@ A sub-agent can ask its orchestrator a single freeform question when requirement
 
 If the reply arrives while the sub-agent is still mid-turn, it is absorbed into the current turn — either way the question is marked answered and the session exits normally when the work is done. If the parent never replies, the pane stays open until a human closes it. Only available inside sub-agent sessions.
 
-## Bundled agents
+## Defining agents
 
-| Agent | Model | Tools | Role |
-| ----- | ----- | ----- | ---- |
-| **scout** | `openrouter/z-ai/glm-5.3` | `read`, `grep`, `find`, `ls` | Fast read-only codebase recon |
-| **researcher** | `openrouter/z-ai/glm-5.3` | `web_search`, `web_fetch`, `safe_bash` | Web research, synthesized into a sourced brief |
-| **worker** | `openrouter/z-ai/glm-5.3` | `read`, `write`, `edit`, `bash`, `web_search`, `web_fetch` + spawning | General implementer; may spawn `scout` and `researcher` |
-
-All three are autonomous (`auto-exit: true`) and carry their identity in the system prompt (`system-prompt: append`).
-
-## Custom agents
-
-Place a `.md` file in `.pi/agents/` (project) or `~/.pi/agent/agents/` (global). Discovery priority: **project > global > package-bundled** — a project-local file overrides a bundled agent with the same name.
+This package does **not** ship scout/researcher/worker (or any other) personas. Place a `.md` file in `.pi/agents/` (project) or `~/.pi/agent/agents/` (global). Discovery priority: **project > global > package** — a project-local file overrides a global or package agent with the same name.
 
 ```markdown
 ---
 name: my-agent
-description: Does something specific
+description: >-
+  Does something specific. Multiline folded descriptions are supported.
 model: openrouter/z-ai/glm-5.3
 thinking: medium
 tools: read, edit, write, safe_bash, web_search
@@ -100,12 +91,14 @@ auto-exit: true
 You are a specialized agent that does X...
 ```
 
+Call `subagents_list` to see what the current session can spawn. The `subagent` tool description also lists discovered agent names.
+
 ### Frontmatter reference
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
 | `name` | string | Agent name (used in `agent: "my-agent"`) |
-| `description` | string | Shown in `subagents_list` |
+| `description` | string | Shown in `subagents_list` (single-line or folded/`>` block scalars) |
 | `model` | string | Default model |
 | `thinking` | string | `minimal`, `low`, `medium`, or `high` |
 | `tools` | string | Strict tool allowlist. Built-ins: `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`. Extension-backed: `web_search`, `web_fetch`, `safe_bash`, `video_extract`, `youtube_search`, `google_image_search`. Only the extensions backing the listed tools are loaded into the child |
@@ -132,7 +125,7 @@ With `auto-exit: true`, the session shuts down when the agent's turn ends — th
 Notes:
 
 - **Manual input does not strand an auto-exit sub-agent.** If a human types into the pane, the session still closes once that turn completes normally — only an escape/abort leaves it open.
-- **Auto-exit is suppressed while work is in flight:** the session parks as `waiting` instead of exiting when an `ask_question` is still unanswered, or when the agent's own child sub-agents are still running (a worker can stop after dispatching children and stays open until the last result returns).
+- **Auto-exit is suppressed while work is in flight:** the session parks as `waiting` instead of exiting when an `ask_question` is still unanswered, or when the agent's own child sub-agents are still running (a lead agent can stop after dispatching children and stays open until the last result returns).
 
 ### interactive
 
@@ -158,7 +151,7 @@ project/
 ```
 
 ```typescript
-subagent({ agent: "worker", cwd: "agents/sre", task: "Review the deployment pipeline" });
+subagent({ agent: "implementer", cwd: "agents/sre", task: "Review the deployment pipeline" });
 ```
 
 Set a per-agent default with `cwd:` in frontmatter.
@@ -184,9 +177,21 @@ Status display is configured via `config.json` in the extension directory (copy 
 tmux new -A -s pi 'pi'
 ```
 
+## Install
+
+In project or global pi settings:
+
+```json
+{
+  "packages": [
+    "git:github.com/agrawal-rohit/pi-interactive-subagents"
+  ]
+}
+```
+
 ## Acknowledgements
 
-Forked from [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), which originated the subagent architecture, the multi-multiplexer surface layer, and the status widget; its supervision features were inspired by [RepoPrompt](https://repoprompt.com/).
+Forked from [amosblomqvist/pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) (tmux-oriented), which itself descends from [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents). This fork removes packaged agent personas so projects supply their own profiles.
 
 ## License
 

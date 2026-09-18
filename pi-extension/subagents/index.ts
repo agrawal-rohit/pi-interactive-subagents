@@ -91,29 +91,6 @@ function getModuleAbortSignal(): AbortSignal {
   return ((globalThis as any)[POLL_ABORT_KEY] as AbortController).signal;
 }
 
-const SubagentParams = Type.Object({
-  agent: Type.String({
-    description:
-      "Which agent to spawn (e.g. 'worker', 'scout', 'researcher'). This loads the agent's " +
-      "fixed profile — its model, tool loadout, and system prompt. Must be one of the available agents.",
-  }),
-  task: Type.String({ description: "Task/prompt for the sub-agent" }),
-  name: Type.Optional(
-    Type.String({
-      description:
-        "Optional cosmetic label for the subagent's pane and widget row. Defaults to the agent name. " +
-        "Has no effect on which agent runs — use `agent` for that.",
-    }),
-  ),
-  model: Type.Optional(Type.String({ description: "Model override (overrides agent default)" })),
-  cwd: Type.Optional(
-    Type.String({
-      description:
-        "Working directory for the sub-agent. The agent starts in this folder and picks up its local .pi/ config, CLAUDE.md, skills, and extensions. Use for role-specific subfolders.",
-    }),
-  ),
-});
-
 type SubagentSessionMode = "standalone" | "lineage-only" | "fork";
 
 interface AgentDefaults {
@@ -149,6 +126,31 @@ interface AgentDefinition extends AgentDefaults {
 interface ListedAgentDefinition extends AgentDefinition {
   source: AgentSource;
 }
+
+const SubagentParams = Type.Object({
+  agent: Type.String({
+    description:
+      "Which agent to spawn by name. Loads that agent's fixed profile — its model, tool " +
+      "loadout, and system prompt. Must be one of the agents returned by subagents_list " +
+      "(project .pi/agents/, global ~/.pi/agent/agents/, or package agents/). " +
+      "Prefer project agents when present. Do not invent agent names.",
+  }),
+  task: Type.String({ description: "Task/prompt for the sub-agent" }),
+  name: Type.Optional(
+    Type.String({
+      description:
+        "Optional cosmetic label for the subagent's pane and widget row. Defaults to the agent name. " +
+        "Has no effect on which agent runs — use `agent` for that.",
+    }),
+  ),
+  model: Type.Optional(Type.String({ description: "Model override (overrides agent default)" })),
+  cwd: Type.Optional(
+    Type.String({
+      description:
+        "Working directory for the sub-agent. The agent starts in this folder and picks up its local .pi/ config, CLAUDE.md, skills, and extensions. Use for role-specific subfolders.",
+    }),
+  ),
+});
 
 /**
  * The full subagent lifecycle/spawning toolset registered by this extension.
@@ -248,9 +250,37 @@ function getBundledAgentsDir(): string {
   return join(SUBAGENTS_DIR, "../../agents");
 }
 
+/**
+ * Read a YAML frontmatter scalar. Supports single-line values and block
+ * scalars (`>`, `>-`, `|`, `|-`, …) used by project agents for multiline
+ * `description:` fields. Without this, folded descriptions collapse to `>-`
+ * and local agents look broken next to any single-line profiles.
+ */
 function getFrontmatterValue(frontmatter: string, key: string): string | undefined {
-  const match = frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-  return match ? match[1].trim() : undefined;
+  const lines = frontmatter.split("\n");
+  const keyRe = new RegExp(`^${key}:\\s*(.*)$`);
+  const idx = lines.findIndex((line) => keyRe.test(line));
+  if (idx < 0) return undefined;
+
+  const first = (lines[idx].match(keyRe)?.[1] ?? "").trim();
+  const isBlock = /^[|>][+-]?$/.test(first);
+  if (!isBlock) return first || undefined;
+
+  const collected: string[] = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    // Top-level frontmatter keys are unindented; stop at the next one.
+    if (line.length > 0 && !/^\s/.test(line)) break;
+    collected.push(line.replace(/^  /, ""));
+  }
+
+  if (first.startsWith(">")) {
+    return collected
+      .join("\n")
+      .replace(/\n+/g, " ")
+      .trim();
+  }
+  return collected.join("\n").replace(/\s+$/, "") || undefined;
 }
 
 function parseOptionalBoolean(value: string | undefined): boolean | undefined {
@@ -389,9 +419,9 @@ function resolveLaunchBehavior(
  * Resolution order:
  *   1. Explicit `interactive` frontmatter field on the agent.
  *   2. Default: the inverse of `auto-exit`. Agents that auto-exit are
- *      autonomous (scout, researcher) and the parent session should be
- *      woken on stall/recovery transitions. Agents that don't auto-exit are
- *      driven by the user in their own pane (worker) and stall pings are noise.
+ *      autonomous and the parent session should be woken on stall/recovery
+ *      transitions. Agents that don't auto-exit are driven by the user in
+ *      their own pane and stall pings are noise.
  */
 function resolveEffectiveInteractive(
   _params: Static<typeof SubagentParams>,
@@ -632,8 +662,8 @@ interface RunningSubagent {
 const runningSubagents = new Map<string, RunningSubagent>();
 
 // When this extension is loaded inside a subagent that itself spawns children
-// (e.g. a worker delegating to scout/researcher), `subagent-done.ts` runs in the
-// same process and needs to know whether this session still has children in
+// (via `subagent_agents`), `subagent-done.ts` runs in the same process and needs
+// to know whether this session still has children in
 // flight — so it can suppress auto-exit and keep the session open until they all
 // report back. Expose a live count through a process-global symbol that both
 // modules share. (subagent-done.ts reads it; if absent it assumes zero.)
@@ -1125,6 +1155,8 @@ export const __test__ = {
   renderSubagentWidgetLines,
   loadAgentDefaults,
   discoverAgentDefinitions,
+  getFrontmatterValue,
+  parseAgentDefinition,
   resolveEffectiveSessionMode,
   resolveLaunchBehavior,
   resolveEffectiveInteractive,
@@ -1675,6 +1707,34 @@ export default function subagentsExtension(pi: ExtensionAPI) {
     runningSubagents.clear();
   });
 
+  // Surface project/global agents in the system prompt so the model prefers
+  // real local profiles over inventing names or ignoring .pi/agents/.
+  pi.on("before_agent_start", (event) => {
+    const agents = discoverAgentDefinitions().filter((a) => !a.disableModelInvocation);
+    if (agents.length === 0) {
+      return {
+        systemPrompt:
+          event.systemPrompt +
+          "\n\n## Available subagents\n" +
+          "None discovered. Define agents as `.md` files under `.pi/agents/` (project) " +
+          "or `~/.pi/agent/agents/` (global), then call `subagents_list`.",
+      };
+    }
+    const lines = agents.map((a) => {
+      const desc = a.description ? ` — ${a.description}` : "";
+      const model = a.model ? ` [${a.model}]` : "";
+      return `- ${a.name} (${a.source})${model}${desc}`;
+    });
+    return {
+      systemPrompt:
+        event.systemPrompt +
+        "\n\n## Available subagents\n" +
+        "Spawn only these agents via the `subagent` tool (`agent` field = name below). " +
+        "Call `subagents_list` if unsure. Prefer `(project)` agents.\n" +
+        lines.join("\n"),
+    };
+  });
+
   // The spawning tools are always registered here. Whether a child process can
   // actually see/use them is governed by the parent's `--tools` allowlist and
   // by which extensions are loaded into the child (default-deny --no-extensions
@@ -1955,12 +2015,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       label: "List Subagents",
       description:
         "List all available subagent definitions. " +
-        "Scans project-local .pi/agents/ and global ~/.pi/agent/agents/. " +
-        "Project-local agents override global ones with the same name.",
+        "Scans project .pi/agents/, global ~/.pi/agent/agents/, and any package agents/. " +
+        "Priority: project > global > package. Prefer project agents for this repo.",
       promptSnippet:
-        "List all available subagent definitions. " +
-        "Scans project-local .pi/agents/ and global ~/.pi/agent/agents/. " +
-        "Project-local agents override global ones with the same name.",
+        "List available subagent definitions (project, global, package). " +
+        "Project agents override global/package agents with the same name.",
       parameters: Type.Object({}),
 
       async execute() {
@@ -1968,13 +2027,23 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
         if (list.length === 0) {
           return {
-            content: [{ type: "text", text: "No subagent definitions found." }],
+            content: [
+              {
+                type: "text",
+                text:
+                  "No subagent definitions found. Add .md files under .pi/agents/ " +
+                  "(project) or ~/.pi/agent/agents/ (global).",
+              },
+            ],
             details: { agents: [] },
           };
         }
 
+        const sourceBadge = (source: AgentSource) =>
+          source === "project" ? " (project)" : source === "global" ? " (global)" : " (package)";
+
         const lines = list.map((a) => {
-          const badge = a.source === "project" ? " (project)" : "";
+          const badge = sourceBadge(a.source);
           const desc = a.description ? ` — ${a.description}` : "";
           const model = a.model ? ` [${a.model}]` : "";
           return `• ${a.name}${badge}${model}${desc}`;
@@ -1993,7 +2062,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
           return new Text(theme.fg("dim", "No subagent definitions found."), 0, 0);
         }
         const lines = agents.map((a: any) => {
-          const badge = a.source === "project" ? theme.fg("accent", " (project)") : "";
+          const badgeLabel =
+            a.source === "project" ? " (project)" : a.source === "global" ? " (global)" : " (package)";
+          const badge =
+            a.source === "project"
+              ? theme.fg("accent", badgeLabel)
+              : theme.fg("dim", badgeLabel);
           const desc = a.description ? theme.fg("dim", ` — ${a.description}`) : "";
           const model = a.model ? theme.fg("dim", ` [${a.model}]`) : "";
           return `  ${theme.fg("toolTitle", theme.bold(a.name))}${badge}${model}${desc}`;
@@ -2336,7 +2410,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       const defs = loadAgentDefaults(agentName);
       if (!defs) {
         ctx.ui.notify(
-          `Agent "${agentName}" not found in ~/.pi/agent/agents/ or .pi/agents/`,
+          `Agent "${agentName}" not found in .pi/agents/, ~/.pi/agent/agents/, or package agents/`,
           "error",
         );
         return;

@@ -26,15 +26,14 @@ export function shouldMarkUserTookOver(agentStarted: boolean): boolean {
  * Number of child subagents this session itself still has in flight.
  *
  * When this extension is loaded inside a subagent that can spawn its own
- * children (e.g. a worker delegating to scout/researcher), `index.ts` runs in
- * the same process and publishes a live count through a shared process-global
- * symbol. A subagent that spawns children and then writes a "waiting for
- * results" message would otherwise auto-exit the instant that turn ends —
- * killing the session before its children report back. Reading this count lets
- * `agent_end` keep the session open until every child has finished and its
- * result has been delivered.
+ * children (via `subagent_agents`), `index.ts` runs in the same process and
+ * publishes a live count through a shared process-global symbol. A subagent
+ * that spawns children and then writes a "waiting for results" message would
+ * otherwise auto-exit the instant that turn ends — killing the session before
+ * its children report back. Reading this count lets `agent_end` keep the
+ * session open until every child has finished and its result has been delivered.
  *
- * Returns 0 when the spawning tools aren't loaded (scout/researcher, or a
+ * Returns 0 when the spawning tools aren't loaded (leaf agents, or a
  * standalone session), so those agents auto-exit exactly as before.
  */
 export function runningChildrenCount(): number {

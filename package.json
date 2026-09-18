@@ -1,15 +1,15 @@
 {
   "name": "pi-interactive-subagents",
-  "version": "3.7.2",
-  "description": "Interactive subagents for pi - spawn, orchestrate, and manage sub-agent sessions in tmux",
+  "version": "4.0.0",
+  "description": "General-purpose interactive subagents for pi — spawn, orchestrate, and manage sub-agent sessions in tmux using your own agent profiles",
   "keywords": [
     "pi-package"
   ],
   "license": "MIT",
-  "author": "Amos Blomqvist",
+  "author": "Rohit Agrawal",
   "repository": {
     "type": "git",
-    "url": "https://github.com/amosblomqvist/pi-interactive-subagents"
+    "url": "https://github.com/agrawal-rohit/pi-interactive-subagents"
   },
   "type": "module",
   "scripts": {
