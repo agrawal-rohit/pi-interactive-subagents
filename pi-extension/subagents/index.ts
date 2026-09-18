@@ -94,6 +94,7 @@ function getModuleAbortSignal(): AbortSignal {
 type SubagentSessionMode = "standalone" | "lineage-only" | "fork";
 
 interface AgentDefaults {
+  provider?: string;
   model?: string;
   tools?: string;
   skills?: string;
@@ -312,6 +313,7 @@ function parseAgentDefinition(content: string, fallbackName: string): AgentDefin
   return {
     name: getFrontmatterValue(frontmatter, "name") ?? fallbackName,
     description: getFrontmatterValue(frontmatter, "description"),
+    provider: getFrontmatterValue(frontmatter, "provider"),
     model: getFrontmatterValue(frontmatter, "model"),
     tools: getFrontmatterValue(frontmatter, "tools"),
     systemPromptMode:
@@ -862,13 +864,26 @@ function buildSubagentToolAllowlist(
  * PI_SUBAGENT_ALLOWED / PI_CODING_AGENT_DIR) and cwd are the caller's
  * responsibility since they differ slightly between launch and resume.
  */
+function spawnProvider(loadout: SubagentLoadout): string | null {
+  return loadout.provider ?? null;
+}
+
 function applySandboxToParts(
   parts: string[],
   loadout: SubagentLoadout,
   opts: { artifactDir: string; name: string },
 ): void {
+  const provider = spawnProvider(loadout);
+  if (provider) {
+    parts.push("--provider", shellEscape(provider));
+  }
+
   if (loadout.model) {
-    const model = loadout.thinking ? `${loadout.model}:${loadout.thinking}` : loadout.model;
+    let modelId = loadout.model;
+    if (provider && modelId.toLowerCase().startsWith(`${provider.toLowerCase()}/`)) {
+      modelId = modelId.slice(provider.length + 1);
+    }
+    const model = loadout.thinking ? `${modelId}:${loadout.thinking}` : modelId;
     parts.push("--model", shellEscape(model));
   }
 
@@ -1373,6 +1388,7 @@ async function launchSubagent(
   const loadout: SubagentLoadout = {
     agent: params.agent ?? null,
     toolAllowlist,
+    provider: agentDefs?.provider ?? null,
     model: effectiveModel ?? null,
     thinking: effectiveThinking ?? null,
     systemPromptMode: systemPromptMode ?? null,

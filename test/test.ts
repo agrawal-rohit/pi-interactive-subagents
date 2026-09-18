@@ -327,7 +327,8 @@ describe("session.ts", () => {
     const sample: SubagentLoadout = {
       agent: "worker",
       toolAllowlist: "read,write,edit,safe_bash,web_search,subagent,ask_question",
-      model: "openrouter/z-ai/glm-5.2",
+      provider: "openrouter",
+      model: "z-ai/glm-5.2",
       thinking: "medium",
       systemPromptMode: "append",
       identity: "You are a worker agent.",
@@ -1357,7 +1358,8 @@ describe("subagent discovery", () => {
         {
           agent: "worker",
           toolAllowlist: "read,write,safe_bash",
-          model: "openrouter/z-ai/glm-5.2",
+          provider: "openrouter",
+          model: "z-ai/glm-5.2",
           thinking: "medium",
           systemPromptMode: "append",
           identity: "You are a worker.",
@@ -1369,9 +1371,10 @@ describe("subagent discovery", () => {
         { artifactDir: d, name: "worker" },
       );
       const joined = parts.join(" ");
-      // Model with thinking suffix.
+      assert.ok(joined.includes("--provider"), "expected --provider");
+      assert.ok(joined.includes("openrouter"), "expected openrouter provider");
       assert.ok(joined.includes("--model"), "expected --model");
-      assert.ok(joined.includes("openrouter/z-ai/glm-5.2:medium"), "expected model:thinking");
+      assert.ok(joined.includes("z-ai/glm-5.2:medium"), "expected model:thinking");
       // Identity written to a file and appended.
       assert.ok(joined.includes("--append-system-prompt"), "expected --append-system-prompt");
       // Default-deny restriction.
@@ -1394,6 +1397,7 @@ describe("subagent discovery", () => {
         {
           agent: null,
           toolAllowlist: null,
+          provider: null,
           model: null,
           thinking: null,
           systemPromptMode: null,

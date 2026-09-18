@@ -81,7 +81,8 @@ This package does **not** ship scout/researcher/worker (or any other) personas. 
 name: my-agent
 description: >-
   Does something specific. Multiline folded descriptions are supported.
-model: openrouter/z-ai/glm-5.3
+provider: openrouter
+model: z-ai/glm-5.3
 thinking: medium
 tools: read, edit, write, safe_bash, web_search
 session-mode: lineage-only
@@ -99,7 +100,8 @@ Call `subagents_list` to see what the current session can spawn. The `subagent` 
 | ----- | ---- | ----------- |
 | `name` | string | Agent name (used in `agent: "my-agent"`) |
 | `description` | string | Shown in `subagents_list` (single-line or folded/`>` block scalars) |
-| `model` | string | Default model |
+| `provider` | string | Optional `--provider` for spawn (e.g. `openrouter`). Required for OpenRouter so model ids like `openai/...` are not mistaken for native providers |
+| `model` | string | Default model id for that provider (e.g. `z-ai/glm-5.3`, `openai/gpt-5.6-luna`) |
 | `thinking` | string | `minimal`, `low`, `medium`, or `high` |
 | `tools` | string | Strict tool allowlist. Built-ins: `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`. Extension-backed: `web_search`, `web_fetch`, `safe_bash`, `video_extract`, `youtube_search`, `google_image_search`. Only the extensions backing the listed tools are loaded into the child |
 | `subagent_agents` | string | Comma-separated agent names this agent may spawn. **Presence of this field grants the spawning toolset** (`subagent`, `subagent_message`, `subagents_list`) and restricts spawn targets to the list. Omit it and the agent cannot spawn at all |
